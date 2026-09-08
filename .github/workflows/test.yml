@@ -1,0 +1,37 @@
+name: Checks
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  test-and-build:
+    runs-on: macos-14
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          python-version: '3.12'
+          enable-cache: true
+      - name: Check installer syntax
+        run: bash -n install.sh Install.command scripts/test_native.sh zkdictate
+      - run: uv sync --locked
+      - run: make test
+      - run: make test-native
+      - run: make app
+      - run: uv build
+      - name: Save source and Python packages
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: source-and-python-packages
+          path: |
+            dist/*.tar.gz
+            dist/*.whl
+          retention-days: 14
+          if-no-files-found: error
