@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -euo pipefail
+SOURCE="${BASH_SOURCE[0]}"
+while [[ -L "$SOURCE" ]]; do
+  SOURCE_DIR="$(cd -- "$(dirname -- "$SOURCE")" && pwd -P)"
+  SOURCE="$(readlink "$SOURCE")"
+  [[ "$SOURCE" = /* ]] || SOURCE="$SOURCE_DIR/$SOURCE"
+done
+REPO_DIR="$(cd -- "$(dirname -- "$SOURCE")" && pwd -P)"
+export PATH="$PATH:$HOME/.local/bin"
+if ! command -v uv >/dev/null 2>&1; then
+  echo "ZK Dictate requires uv: https://docs.astral.sh/uv/getting-started/installation/" >&2
+  exit 1
+fi
+# Always use this checkout’s environment, even from an activated shell.
+unset VIRTUAL_ENV
+exec uv run --project "$REPO_DIR" --frozen zkdictate "$@"

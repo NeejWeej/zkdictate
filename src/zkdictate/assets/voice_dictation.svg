@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#101722"/>
+      <stop offset="52%" stop-color="#17283b"/>
+      <stop offset="100%" stop-color="#243746"/>
+    </linearGradient>
+    <linearGradient id="dune" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#8c5b2e"/>
+      <stop offset="100%" stop-color="#e0ad5d"/>
+    </linearGradient>
+    <linearGradient id="planet" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#f2d59c"/>
+      <stop offset="100%" stop-color="#cb8442"/>
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="28" fill="url(#sky)"/>
+  <circle cx="92" cy="35" r="18" fill="url(#planet)"/>
+  <path d="M69 37c8-7 25-9 39-3" fill="none" stroke="#98d4d3" stroke-linecap="round" stroke-width="4"/>
+  <path d="M16 92c11-10 23-15 37-16 12-1 23 2 33 8 10 5 18 7 26 4v24H16Z" fill="url(#dune)"/>
+  <path d="M16 102c10-6 22-10 34-11 16-1 27 3 41 11v10H16Z" fill="#5a4027" opacity=".9"/>
+  <path d="M43 27a16 16 0 0 1 16 16v22a16 16 0 0 1-32 0V43a16 16 0 0 1 16-16Z" fill="#f5ead7"/>
+  <path d="M43 33a10 10 0 0 1 10 10v22a10 10 0 0 1-20 0V43a10 10 0 0 1 10-10Z" fill="#223544"/>
+  <path d="M22 59a3 3 0 0 1 3 3 18 18 0 0 0 36 0 3 3 0 0 1 6 0 24 24 0 0 1-21 23.82V95h9a3 3 0 1 1 0 6H31a3 3 0 1 1 0-6h9v-9.18A24 24 0 0 1 19 62a3 3 0 0 1 3-3Z" fill="#98d4d3"/>
+  <circle cx="92" cy="35" r="4" fill="#fff5df" opacity=".75"/>
+</svg>

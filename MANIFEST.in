@@ -1,0 +1,6 @@
+include LICENSE README.md Makefile uv.lock .python-version install.sh Install.command
+include zkdictate
+recursive-include tests *.py
+recursive-include native *.swift *.plist
+recursive-include scripts *.py *.sh
+recursive-include docs *.md
