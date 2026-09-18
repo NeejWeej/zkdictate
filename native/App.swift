@@ -9,18 +9,26 @@ private final class DictationDocument: NSView {
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var window: NSWindow!
+    private var activityLabel: NSTextField!
+    private var activityPanel: NSBox!
+    private var zoomLabel: NSTextField!
+    private var zoomMonitor: Any?
+    private var baseFonts: [(NSView, NSFont)] = []
     private var statusLabel: NSTextField!
     private var permissionLabel: NSTextField!
     private var notesLabel: NSTextField!
     private var transcript: NSTextView!
     private var startButton: NSButton!
-    private var pauseButton: NSButton!
     private var outputPicker: NSPopUpButton!
     private var modelPicker: NSPopUpButton!
     private var hotkeyLabel: NSTextField!
     private var recordKeyButton: NSButton!
     private var keyMonitor: Any?
     private var choosingKey = false
+    private var finishAndPasteButton: NSButton!
+    private var pasteIntent = FinishAndPaste()
+    private var copyingDictation = false
+    private static let pasteEventTag: Int64 = 0x5a4b5041535445
     private var beepButton: NSButton!
     private var folderButton: NSButton!
     private var fileButton: NSButton!
@@ -47,6 +55,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var sideBySideButton: NSButton!
     private var panes: NSStackView!
     private var dictationPane: NSScrollView!
+    private var clipboardSplitWidth: NSLayoutConstraint!
     private var dictationWidth: NSLayoutConstraint!
     private var dictationTabWidth: NSLayoutConstraint!
     private var clipboardTabWidth: NSLayoutConstraint!
@@ -89,7 +98,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func makeWindow() {
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 720, height: 780), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window.title = "ZK Dictate"; window.minSize = NSSize(width: 620, height: 500); window.center(); window.isReleasedWhenClosed = false; window.delegate = self
-        let title = NSTextField(labelWithString: "Your voice. On your Mac."); title.font = .boldSystemFont(ofSize: 24)
+        let title = NSTextField(labelWithString: "Dictation"); title.font = .boldSystemFont(ofSize: 24)
         let intro = NSTextField(wrappingLabelWithString: "Hold your dictation key to speak. Release to transcribe locally.")
         permissionLabel = NSTextField(wrappingLabelWithString: "")
         let mic = NSButton(title: "Allow Microphone", target: self, action: #selector(microphone))
@@ -103,28 +112,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         modelPicker.selectItem(at: TranscriptionModel.allCases.firstIndex(of: settings.model) ?? 0)
         modelPicker.target = self; modelPicker.action = #selector(changeModel)
         beepButton = NSButton(checkboxWithTitle: "Sound cues", target: self, action: #selector(changeBeep)); beepButton.state = settings.beep ? .on : .off
+        finishAndPasteButton = NSButton(checkboxWithTitle: "Finish and paste with ⌘V (experimental)", target: self, action: #selector(changeFinishAndPaste))
+        finishAndPasteButton.state = settings.finishAndPaste ? .on : .off
+        finishAndPasteButton.toolTip = "Stop dictation to change. In clipboard mode, ⌘V finishes and pastes at the cursor when ready. Other keys cancel the queued paste. Requires Accessibility access."
         notesLabel = NSTextField(wrappingLabelWithString: ""); notesLabel.isSelectable = true; updateDestination()
         folderButton = NSButton(title: "Choose Notes Folder…", target: self, action: #selector(chooseFolder))
         fileButton = NSButton(title: "Choose Output File…", target: self, action: #selector(chooseFile))
+        updateDestination()
         startButton = NSButton(title: "Start Dictation", target: self, action: #selector(toggleStart)); startButton.bezelStyle = .rounded
-        pauseButton = NSButton(title: "Pause", target: self, action: #selector(togglePause)); pauseButton.isEnabled = false
         statusLabel = NSTextField(wrappingLabelWithString: ""); statusLabel.font = .boldSystemFont(ofSize: 14)
         transcript = NSTextView(); transcript.isEditable = false; transcript.isSelectable = true; transcript.font = .systemFont(ofSize: 16)
         transcript.textContainerInset = NSSize(width: 12, height: 12)
         let scroll = NSScrollView(); scroll.hasVerticalScroller = true; scroll.borderType = .bezelBorder; scroll.documentView = transcript
         transcript.isVerticallyResizable = true; transcript.isHorizontallyResizable = false
         transcript.autoresizingMask = [.width]; transcript.textContainer?.widthTracksTextView = true
-        let copy = NSButton(title: "Copy Transcript", target: self, action: #selector(copyTranscript))
-        let save = NSButton(title: "Save Transcript as Note", target: self, action: #selector(saveTranscript))
+        let copy = NSButton(title: "Copy", target: self, action: #selector(copyTranscript))
+        let save = NSButton(title: "Save as note", target: self, action: #selector(saveTranscript))
         let clear = NSButton(title: "Clear", target: self, action: #selector(clearTranscript))
-        let stack = NSStackView(views: [title, intro, row([mic, input]), permissionLabel,
-            row([NSTextField(labelWithString: "Model:"), modelPicker]),
-            NSTextField(wrappingLabelWithString: "Each model downloads once, then works offline. Stop dictation to change models."),
-            row([NSTextField(labelWithString: "Output:"), outputPicker]),
-            row([NSTextField(labelWithString: "Hotkey:"), hotkeyLabel, recordKeyButton, beepButton]),
-            notesLabel, row([folderButton, fileButton]), row([startButton, pauseButton]), statusLabel,
-            NSTextField(labelWithString: "Latest transcript"), scroll, row([copy, save, clear])])
-        stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 12; stack.translatesAutoresizingMaskIntoConstraints = false
+        let transcriptSection = InterfaceSection("Your words", views: [scroll, row([copy, save, clear])])
+        let recordingSection = InterfaceSection("How you record", views: [
+            row([hotkeyLabel, recordKeyButton]), beepButton, finishAndPasteButton
+        ])
+        let destinationSection = InterfaceSection("Where your words go", views: [
+            outputPicker, notesLabel, folderButton, fileButton
+        ])
+        let setupSection = InterfaceSection("Setup & permissions", caption: "Model and microphone access. Open when needed.", views: [
+            NSTextField(labelWithString: "Transcription model"), modelPicker,
+            NSTextField(wrappingLabelWithString: "Downloads once, then works offline. Stop dictation to change it."),
+            permissionLabel, mic, input
+        ], collapsible: true)
+        let stack = NSStackView(views: [title, intro, transcriptSection, recordingSection, destinationSection, setupSection])
+        stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 24; stack.translatesAutoresizingMaskIntoConstraints = false
+        for section in [transcriptSection, recordingSection, destinationSection, setupSection] {
+            section.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        }
+        intro.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         dictationPane = NSScrollView(); dictationPane.hasVerticalScroller = true
         let document = DictationDocument(); document.translatesAutoresizingMaskIntoConstraints = false
         dictationPane.documentView = document; document.addSubview(stack)
@@ -136,31 +158,65 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             stack.trailingAnchor.constraint(equalTo: document.trailingAnchor, constant: -24),
             stack.topAnchor.constraint(equalTo: document.topAnchor, constant: 20),
             stack.bottomAnchor.constraint(equalTo: document.bottomAnchor, constant: -20),
-            scroll.widthAnchor.constraint(equalTo: stack.widthAnchor),
             scroll.heightAnchor.constraint(equalToConstant: 180)
         ])
         sections = NSSegmentedControl(labels: ["Dictation", "Clipboard"], trackingMode: .selectOne, target: self, action: #selector(changeSection))
         sections.selectedSegment = 0
         sideBySideButton = NSButton(checkboxWithTitle: "Side by side", target: self, action: #selector(changeLayout))
-        let navigation = row([sections, sideBySideButton]); navigation.translatesAutoresizingMaskIntoConstraints = false
+        let smaller = NSButton(title: "−", target: self, action: #selector(zoomOut))
+        let larger = NSButton(title: "+", target: self, action: #selector(zoomIn))
+        let reset = NSButton(title: "Reset", target: self, action: #selector(resetZoom))
+        smaller.toolTip = "Zoom out (⌘−)"; larger.toolTip = "Zoom in (⌘+)"; reset.toolTip = "Reset zoom (⌘0)"
+        zoomLabel = NSTextField(labelWithString: "100%")
+        let navigation = row([sections, sideBySideButton, smaller, zoomLabel, larger, reset]); navigation.translatesAutoresizingMaskIntoConstraints = false
+        activityLabel = NSTextField(labelWithString: "STOPPED · Mic off")
+        activityLabel.font = .boldSystemFont(ofSize: 26)
+        activityPanel = NSBox(); activityPanel.boxType = .custom; activityPanel.borderWidth = 0; activityPanel.titlePosition = .noTitle
+        activityPanel.cornerRadius = 12; activityPanel.contentViewMargins = .zero
+        activityPanel.translatesAutoresizingMaskIntoConstraints = false
+        let activity = NSStackView(views: [activityLabel, statusLabel, startButton])
+        activity.orientation = .vertical; activity.alignment = .leading; activity.spacing = 8
+        activity.translatesAutoresizingMaskIntoConstraints = false; activityPanel.contentView!.addSubview(activity)
+        NSLayoutConstraint.activate([
+            activity.leadingAnchor.constraint(equalTo: activityPanel.leadingAnchor, constant: 16),
+            activity.trailingAnchor.constraint(equalTo: activityPanel.trailingAnchor, constant: -16),
+            activity.topAnchor.constraint(equalTo: activityPanel.topAnchor, constant: 12),
+            activity.bottomAnchor.constraint(equalTo: activityPanel.bottomAnchor, constant: -12),
+            statusLabel.widthAnchor.constraint(equalTo: activity.widthAnchor)
+        ])
         panes = NSStackView(views: [dictationPane, clipboardPane.view]); panes.orientation = .horizontal
         panes.alignment = .top; panes.spacing = 1; panes.translatesAutoresizingMaskIntoConstraints = false
-        dictationWidth = dictationPane.widthAnchor.constraint(equalToConstant: 580)
+        dictationWidth = dictationPane.widthAnchor.constraint(equalTo: panes.widthAnchor, multiplier: 0.53)
+        clipboardSplitWidth = clipboardPane.view.widthAnchor.constraint(equalTo: panes.widthAnchor, multiplier: 0.47, constant: -1)
         dictationTabWidth = dictationPane.widthAnchor.constraint(equalTo: panes.widthAnchor)
         clipboardTabWidth = clipboardPane.view.widthAnchor.constraint(equalTo: panes.widthAnchor)
         let content = window.contentView!
-        content.addSubview(navigation); content.addSubview(panes)
+        content.addSubview(navigation); content.addSubview(activityPanel); content.addSubview(panes)
         NSLayoutConstraint.activate([
             navigation.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 24),
             navigation.topAnchor.constraint(equalTo: content.topAnchor, constant: 14),
-            panes.topAnchor.constraint(equalTo: navigation.bottomAnchor, constant: 12),
+            activityPanel.topAnchor.constraint(equalTo: navigation.bottomAnchor, constant: 12),
+            activityPanel.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 20),
+            activityPanel.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -20),
+            panes.topAnchor.constraint(equalTo: activityPanel.bottomAnchor, constant: 8),
             panes.leadingAnchor.constraint(equalTo: content.leadingAnchor),
             panes.trailingAnchor.constraint(equalTo: content.trailingAnchor),
             panes.bottomAnchor.constraint(equalTo: content.bottomAnchor),
             dictationPane.heightAnchor.constraint(equalTo: panes.heightAnchor),
             clipboardPane.view.heightAnchor.constraint(equalTo: panes.heightAnchor)
         ])
-        applyLayout()
+        rememberFonts(in: content)
+        applyZoom()
+        zoomMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self, !self.choosingKey,
+                  event.modifierFlags.intersection([.command, .option, .control]) == .command else { return event }
+            switch event.charactersIgnoringModifiers {
+            case "+", "=": self.zoomIn(); return nil
+            case "-", "_": self.zoomOut(); return nil
+            case "0": self.resetZoom(); return nil
+            default: return event
+            }
+        }
         menuItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength); menuItem.button?.title = "ZK"
         let menu = NSMenu()
         menu.addItem(withTitle: "Show ZK Dictate", action: #selector(showWindow), keyEquivalent: "")
@@ -171,25 +227,79 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func row(_ views: [NSView]) -> NSStackView { let stack = NSStackView(views: views); stack.orientation = .horizontal; stack.spacing = 10; return stack }
     @objc func showWindow() { window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true) }
     @objc func quit() { NSApp.terminate(nil) }
-    private func show(_ value: String) { statusLabel.stringValue = value }
+    private func show(_ value: String) {
+        statusLabel.stringValue = value
+        menuItem.button?.title = gate.recording ? "● ZK" : pasteIntent.pending ? "ZK ⌘V" : "ZK"
+        menuItem.button?.toolTip = value
+        updateActivity()
+    }
     private var busy: Bool { gate.recording || pendingID != nil || clipboardManager.busy }
     private func updateControls() {
+        updateActivity()
         for control: NSControl in [outputPicker, beepButton, folderButton, fileButton] { control.isEnabled = !busy && pendingAudio == nil && !choosingKey }
+        finishAndPasteButton.isEnabled = worker == nil && !busy && pendingAudio == nil && !choosingKey
         recordKeyButton.isEnabled = worker == nil && !busy && pendingAudio == nil
         recordKeyButton.title = choosingKey ? "Cancel" : "Record Key…"
         startButton.isEnabled = !choosingKey
         modelPicker.isEnabled = worker == nil && !busy && pendingAudio == nil && !choosingKey
-        pauseButton.isEnabled = gate.approved && gate.ready && !busy
-        pauseButton.title = gate.paused ? "Resume" : "Pause"
         startButton.title = worker != nil ? "Stop Dictation" : pendingAudio != nil ? "Retry Transcription" : workerFailed ? "Retry" : "Start Dictation"
     }
-    private func updateDestination() { notesLabel.stringValue = settings.outputMode == "file" ? "Output file: \(settings.filePath ?? "Choose a file below")" : "Notes folder: \(settings.notesDirectory)" }
+    private func updateActivity() {
+        guard activityLabel != nil else { return }
+        let title: String
+        let color: NSColor
+        if gate.recording {
+            title = gate.otherKey ? "CANCELLED · Release key" : "● RECORDING · Mic on"
+            color = gate.otherKey ? .systemOrange : .systemRed
+        } else if pendingID != nil || copyingDictation {
+            title = pasteIntent.pending ? "TRANSCRIBING → PASTE · Mic off" : "TRANSCRIBING · Mic off"
+            color = .systemOrange
+        } else if worker == nil {
+            title = workerFailed ? "ERROR · Mic off" : "STOPPED · Mic off"; color = workerFailed ? .systemRed : .secondaryLabelColor
+        } else if gate.ready {
+            title = "READY · Hold \(hotkeyTitle(settings.hotkey))"; color = .systemGreen
+        } else {
+            title = "LOADING · Mic off"; color = .systemOrange
+        }
+        activityLabel.stringValue = title
+        activityLabel.textColor = color
+        activityPanel.fillColor = color.withAlphaComponent(0.12)
+    }
+    private func rememberFonts(in view: NSView) {
+        if let text = view as? NSTextView, let font = text.font { baseFonts.append((text, font)) }
+        else if let control = view as? NSControl, let font = control.font { baseFonts.append((control, font)) }
+        for child in (view as? NSStackView)?.arrangedSubviews ?? view.subviews { rememberFonts(in: child) }
+    }
+    private func applyZoom() {
+        let scale = CGFloat(settings.zoomPercent) / 100
+        for (view, font) in baseFonts {
+            let scaled = NSFontManager.shared.convert(font, toSize: font.pointSize * scale)
+            if let text = view as? NSTextView { text.font = scaled }
+            else if let control = view as? NSControl { control.font = scaled }
+        }
+        zoomLabel.stringValue = "\(settings.zoomPercent)%"
+        applyLayout()
+    }
+    private func setZoom(_ percent: Int) {
+        var value = settings; value.zoomPercent = min(150, max(80, percent))
+        guard value.zoomPercent != settings.zoomPercent else { return }
+        if persist(value) { applyZoom() }
+    }
+    @objc private func zoomIn() { setZoom(settings.zoomPercent + 10) }
+    @objc private func zoomOut() { setZoom(settings.zoomPercent - 10) }
+    @objc private func resetZoom() { setZoom(100) }
+    private func updateDestination() {
+        notesLabel.isHidden = settings.outputMode == "clipboard"
+        folderButton?.isHidden = settings.outputMode != "note"
+        fileButton?.isHidden = settings.outputMode != "file"
+        notesLabel.stringValue = settings.outputMode == "file" ? "Output file: \(settings.filePath ?? "Choose a file below")" : "Notes folder: \(settings.notesDirectory)" }
     @discardableResult private func persist(_ proposed: AppSettings) -> Bool {
         var saved = false
         do { try proposed.save(); settings = proposed; settingsError = nil; saved = true } catch { show("Could not save settings: \(error.localizedDescription)") }
         outputPicker.selectItem(at: modes.firstIndex(of: settings.outputMode) ?? 0)
         hotkeyLabel.stringValue = hotkeyTitle(settings.hotkey)
         modelPicker.selectItem(at: TranscriptionModel.allCases.firstIndex(of: settings.model) ?? 0)
+        finishAndPasteButton.state = settings.finishAndPaste ? .on : .off
         beepButton.state = settings.beep ? .on : .off; updateDestination()
         return saved
     }
@@ -227,6 +337,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         endKeySelection(); show("Key selection cancelled. Hotkey is still \(hotkeyTitle(settings.hotkey)).")
     }
     func applicationDidResignActive(_ notification: Notification) { cancelKeySelection(); clipboardPane?.applicationDidResignActive() }
+    @objc func changeFinishAndPaste() {
+        guard worker == nil, !busy, pendingAudio == nil else { return }
+        var value = settings; value.finishAndPaste = finishAndPasteButton.state == .on
+        persist(value)
+    }
     @objc func changeBeep() { var value = settings; value.beep = beepButton.state == .on; persist(value) }
     @objc func chooseFolder() {
         guard !busy else { return }
@@ -264,13 +379,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func startWorker() {
         guard !choosingKey else { return }
         guard settingsError == nil else { show("Choose a notes folder to repair settings first."); return }
-        guard refreshPermissions() else { show("Allow microphone and Input Monitoring above, then restart the app if needed."); return }
+        guard refreshPermissions() else { show("Open Setup & permissions to allow microphone and Input Monitoring, then restart if needed."); return }
         guard settings.outputMode != "file" || settings.filePath != nil else { show("Choose an output file first."); return }
+        if settings.finishAndPaste && !AXIsProcessTrusted() {
+            _ = AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary)
+            show("Allow ZK Dictate in Accessibility to use Finish and Paste, then click Start Dictation again.")
+            return
+        }
         guard installHotkey() else { show("Could not enable the hotkey. Restart after granting Input Monitoring."); return }
         generation = UUID(); let session = generation
         workerFailed = false
         let service = WorkerProcess(); worker = service
-        gate.approved = true; gate.ready = false; gate.paused = false
+        gate.approved = true; gate.ready = false
         deadline = ProcessInfo.processInfo.systemUptime + 600
         service.onEvent = { [weak self] object in guard let self, self.generation == session else { return }; self.workerEvent(object) }
         service.onExit = { [weak self] code in guard let self, self.generation == session else { return }; self.failWorker("Transcription service stopped (\(code)). Click Retry.") }
@@ -288,13 +408,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             guard let id = object["id"] as? String, id == pendingID, let text = object["text"] as? String else { failWorker("Invalid transcription response. Click Retry."); return }
             pendingID = nil; pendingAudio = nil; deadline = nil; gate.ready = true
             let target = outputSnapshot ?? settings; outputSnapshot = nil
-            if text.isEmpty { show("No speech detected. Try again.") }
+            if text.isEmpty { pasteIntent.cancel(); show("No speech detected. Try again.") }
             else {
                 lastText = text; transcript.string = text
                 do {
                     if target.outputMode == "note" { let url = try NoteOutput.save(text, folder: URL(fileURLWithPath: target.notesDirectory)); show("Saved note: \(url.lastPathComponent)") }
                     else if target.outputMode == "file", let path = target.filePath { try NoteOutput.append(text, file: URL(fileURLWithPath: path)); show("Appended transcript to \(URL(fileURLWithPath: path).lastPathComponent)") }
-                    else { copyText(text) }
+                    else { copyText(text, automaticPaste: true) }
                 } catch { show("Transcript preserved below, but saving failed: \(error.localizedDescription)") }
             }
         case "error", "fatal": failWorker("Transcription failed: \(object["message"] as? String ?? "Unknown error"). Click Retry.")
@@ -305,13 +425,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func submit(_ audio: Data) {
         pendingAudio = audio; pendingID = UUID().uuidString; gate.ready = false
         deadline = ProcessInfo.processInfo.systemUptime + 120
-        show("Transcribing…"); worker?.transcribe(audio, id: pendingID!); updateControls()
+        show(pasteIntent.pending ? "Transcribing… will paste" : "Transcribing…"); worker?.transcribe(audio, id: pendingID!); updateControls()
     }
     private func failWorker(_ message: String) {
         shutdownWorker(); workerFailed = true; show(message); updateControls()
     }
     private func shutdownWorker() {
-        generation = UUID(); cancelCapture(); gate = CaptureGate(); pendingID = nil; deadline = nil
+        generation = UUID(); cancelCapture(); pasteIntent = FinishAndPaste(); copyingDictation = false; gate = CaptureGate(); pendingID = nil; deadline = nil
         worker?.stop(); worker = nil
         if let tap { CGEvent.tapEnable(tap: tap, enable: false); CFMachPortInvalidate(tap) }
         if let tapSource { CFRunLoopRemoveSource(CFRunLoopGetMain(), tapSource, .commonModes) }
@@ -331,16 +451,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         sideBySideButton.state = split ? .on : .off
         sections.isHidden = split
         dictationTabWidth.isActive = false; clipboardTabWidth.isActive = false
-        dictationWidth.isActive = split
+        dictationWidth.isActive = split; clipboardSplitWidth.isActive = split
         dictationPane.isHidden = !split && sections.selectedSegment == 1
         clipboardPane.view.isHidden = !split && sections.selectedSegment == 0
         dictationTabWidth.isActive = !split && sections.selectedSegment == 0
         clipboardTabWidth.isActive = !split && sections.selectedSegment == 1
         clipboardPane.setVisible(!clipboardPane.view.isHidden)
-        window.minSize = NSSize(width: split ? 1000 : 620, height: 500)
+        let scale = CGFloat(settings.zoomPercent) / 100
+        let screenWidth = (window.screen ?? NSScreen.main)?.visibleFrame.width ?? 1600
+        window.minSize = NSSize(width: min(screenWidth, (split ? 1000 : 620) * scale), height: 500)
         guard resizeWindow else { return }
         var frame = window.frame
-        frame.size.width = split ? max(frame.width, 1080) : min(frame.width, 720)
+        frame.size.width = min(screenWidth, split ? max(frame.width, 1120 * scale) : 720 * scale)
         if let screen = window.screen ?? NSScreen.main {
             frame.size.height = min(frame.height, screen.visibleFrame.height)
             frame.origin.x = max(screen.visibleFrame.minX, min(frame.origin.x, screen.visibleFrame.maxX - frame.width))
@@ -348,17 +470,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         window.setFrame(frame, display: true)
     }
-    @objc func togglePause() { guard !busy else { return }; gate.paused.toggle(); show(gate.paused ? "Paused. Microphone is off." : "Ready to dictate."); updateControls() }
-    private func copyText(_ text: String) {
+    private func copyText(_ text: String, automaticPaste: Bool = false) {
+        copyingDictation = automaticPaste
         let session = generation
         clipboardManager.copy(text) { [weak self] result in
             guard let self, self.generation == session else { return }
+            self.copyingDictation = false
             switch result {
-            case .success: self.show("Copied to clipboard. Ready for the next dictation.")
-            case .failure(let error): self.show("\(error.localizedDescription) Transcript preserved below.")
+            case .success:
+                if automaticPaste && self.pasteIntent.take() { self.postPaste() }
+                else { self.show("Copied to clipboard. Ready for the next dictation.") }
+            case .failure(let error):
+                self.pasteIntent.cancel()
+                self.show("\(error.localizedDescription) Transcript preserved below.")
             }
             self.updateControls()
         }
+    }
+    private func postPaste() {
+        guard AXIsProcessTrusted(),
+              let source = CGEventSource(stateID: .privateState),
+              let down = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true),
+              let up = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: false) else {
+            show("Automatic paste unavailable. Transcript copied; press ⌘V to paste."); return
+        }
+        for event in [down, up] {
+            event.flags = .maskCommand
+            event.setIntegerValueField(.eventSourceUserData, value: Self.pasteEventTag)
+            event.post(tap: .cgSessionEventTap)
+        }
+        show("Paste sent. Ready for the next dictation.")
     }
     @objc func copyTranscript() { guard !busy, !lastText.isEmpty else { return }; copyText(lastText) }
     @objc func saveTranscript() {
@@ -370,8 +511,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func installHotkey() -> Bool {
         if tap != nil { return true }
         let mask = (1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.keyUp.rawValue) | (1 << CGEventType.flagsChanged.rawValue)
-        guard let tap = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap, options: .listenOnly, eventsOfInterest: CGEventMask(mask), callback: { _, type, event, data in
-            if let data { Unmanaged<AppDelegate>.fromOpaque(data).takeUnretainedValue().keyEvent(type, event) }
+        guard let tap = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap, options: settings.finishAndPaste ? .defaultTap : .listenOnly, eventsOfInterest: CGEventMask(mask), callback: { _, type, event, data in
+            if let data, Unmanaged<AppDelegate>.fromOpaque(data).takeUnretainedValue().keyEvent(type, event) { return nil }
             return Unmanaged.passUnretained(event)
         }, userInfo: Unmanaged.passUnretained(self).toOpaque()) else { return false }
         self.tap = tap; tapSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
@@ -379,28 +520,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         CGEvent.tapEnable(tap: tap, enable: true)
         return true
     }
-    func keyEvent(_ type: CGEventType, _ event: CGEvent) {
+    func keyEvent(_ type: CGEventType, _ event: CGEvent) -> Bool {
+        if event.getIntegerValueField(.eventSourceUserData) == Self.pasteEventTag { return false }
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-            cancelCapture(); if let tap { CGEvent.tapEnable(tap: tap, enable: true) }; return
+            cancelCapture(); if let tap { CGEvent.tapEnable(tap: tap, enable: true) }; return false
         }
-        guard window.attachedSheet == nil else { return }
+        guard window.attachedSheet == nil else { return false }
         let code = event.getIntegerValueField(.keyboardEventKeycode)
+        let action = pasteIntent.key(code: code, flags: event.flags.rawValue,
+            down: type == .keyDown, modifier: type == .flagsChanged,
+            repeated: event.getIntegerValueField(.keyboardEventAutorepeat) != 0,
+            enabled: settings.finishAndPaste,
+            active: (gate.canFinish(now: ProcessInfo.processInfo.systemUptime) || pendingID != nil || copyingDictation) && settings.outputMode == "clipboard")
+        switch action {
+        case .request:
+            if gate.recording { finishCapture() }
+            else { show("Transcribing… will paste") }
+            updateControls(); return true
+        case .swallow: return true
+        case .cancel: show("Automatic paste cancelled. Transcription will still be copied.")
+        case .pass: break
+        }
+        // A held/re-pressed microphone key must not restart capture or replace
+        // the queued-paste status while this dictation is being processed.
+        if settings.finishAndPaste && (pendingID != nil || clipboardManager.busy) { return false }
         let keys = allowedHotkeys[settings.hotkey] ?? [54]
         if !keys.contains(code) {
-            if gate.recording && (type == .keyDown || type == .flagsChanged) { gate.otherKey = true }
-            return
+            if gate.recording && (type == .keyDown || type == .flagsChanged) { gate.otherKey = true; updateActivity() }
+            return false
         }
         let pressed = type == .keyDown || (type == .flagsChanged && modifierHotkeyIsDown(settings.hotkey, flags: event.flags.rawValue))
-        if event.getIntegerValueField(.keyboardEventAutorepeat) != 0 { return }
+        if event.getIntegerValueField(.keyboardEventAutorepeat) != 0 { return false }
         if pressed {
-            guard !clipboardManager.busy else { show("Wait for the clipboard operation to finish."); return }
+            guard !clipboardManager.busy else { show("Wait for the clipboard operation to finish."); return false }
             guard recordableHotkey(code: code, flags: event.flags.rawValue, modifierEvent: type == .flagsChanged) == settings.hotkey else {
-                show("Hotkey ignored: release other modifier keys first."); return
+                show("Hotkey ignored: release other modifier keys first."); return false
             }
             guard gate.press(now: ProcessInfo.processInfo.systemUptime) else {
-                let reason = !gate.approved ? "Session not approved" : !gate.ready ? "Transcription worker not ready" : gate.paused ? "Dictation paused" : "Already recording"
+                let reason = !gate.approved ? "Session not approved" : !gate.ready ? "Transcription worker not ready" : "Already recording"
                 show("Hotkey ignored: \(reason)")
-                return
+                return false
             }
             do {
                 try recorder.start(); menuItem.button?.title = "● ZK"; show("Recording")
@@ -408,24 +567,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 recordingTimer = Timer.scheduledTimer(withTimeInterval: gate.maximumHold, repeats: false) { [weak self] _ in self?.cancelCapture(); self?.show("Recording reached 10-minute limit; discarded"); self?.updateControls() }
             } catch { gate.cancel(); show("Microphone error: \(error)") }
         } else if gate.recording {
-            let accepted = gate.release(now: ProcessInfo.processInfo.systemUptime)
-            recordingTimer?.invalidate(); recordingTimer = nil
-            let audio = recorder.stop(discard: !accepted); menuItem.button?.title = "ZK"
-            if settings.beep { NSSound.beep() }
-            if let audio {
-                show("Transcribing")
-                outputSnapshot = settings
-                submit(audio)
-            } else { gate.ready = true; show("Recording discarded — hold at least \(gate.minimumHold)s without other keys") }
+            finishCapture()
         }
         updateControls()
+        return false
+    }
+    private func finishCapture() {
+        let accepted = gate.release(now: ProcessInfo.processInfo.systemUptime)
+        recordingTimer?.invalidate(); recordingTimer = nil
+        let audio = recorder.stop(discard: !accepted); menuItem.button?.title = "ZK"
+        if settings.beep { NSSound.beep() }
+        if let audio {
+            show("Transcribing")
+            outputSnapshot = settings
+            submit(audio)
+        } else { pasteIntent.cancel(); gate.ready = true; show("Recording discarded — hold at least \(gate.minimumHold)s without other keys") }
     }
     func cancelCapture() {
+        pasteIntent.cancel()
         gate.cancel(); _ = recorder.stop(discard: true)
         recordingTimer?.invalidate(); recordingTimer = nil
         menuItem.button?.title = "ZK"
     }
     func applicationWillTerminate(_ notification: Notification) {
+        if let zoomMonitor { NSEvent.removeMonitor(zoomMonitor) }
         clipboardManager.clear(); clipboardPane?.hidePreviews()
         if window != nil { endKeySelection(); shutdownWorker() }; timer?.invalidate()
         if instanceFD >= 0 { Darwin.close(instanceFD) }

@@ -7,6 +7,9 @@ func expect(_ condition: @autoclosure () -> Bool, _ message: String) {
 
 @main
 struct NativeTests {
+    static func trySettings(_ value: AppSettings) -> AppSettings {
+        try! AppSettings.fromData(JSONEncoder().encode(value))
+    }
     static func main() throws {
         // Hardware-like modifier edges must work without querying live keys.
         for (name, mask, side, other) in [("right_cmd", UInt64(0x100000), UInt64(0x10), UInt64(0x08)),
@@ -70,10 +73,8 @@ struct NativeTests {
         expect(gate.press(now: 6), "new recording resets accidental key guard")
         expect(gate.release(now: 8), "long clean recording accepted")
         expect(!gate.press(now: 9), "transcription blocks overlapping capture")
-        gate.ready = true; gate.paused = true
-        expect(!gate.press(now: 9), "pause blocks capture")
-        gate.paused = false
-        expect(gate.press(now: 10), "resume allows capture")
+        gate.ready = true
+        expect(gate.press(now: 10), "ready worker allows next capture")
         gate.approved = false
         expect(!gate.release(now: 12), "disconnect invalidates unfinished recording")
         gate.approved = true
@@ -103,6 +104,93 @@ struct NativeTests {
         var splitSettings = AppSettings(); splitSettings.sideBySide = true
         let splitRoundtrip = try AppSettings.fromData(JSONEncoder().encode(splitSettings))
         expect(splitRoundtrip.sideBySide, "side-by-side layout survives settings save and load")
+        // Exercise the optional shortcut policy together with the real capture gate.
+        expect(!defaultClipboard.finishAndPaste, "finish-and-paste defaults off for existing installations")
+        var experimental = AppSettings(); experimental.finishAndPaste = true
+        expect(trySettings(experimental).finishAndPaste, "feature flag survives settings roundtrip")
+        var intent = FinishAndPaste()
+        func key(_ code: Int64 = 9, flags: UInt64 = 0x100010, down: Bool = true,
+                 modifier: Bool = false, repeated: Bool = false, enabled: Bool = true,
+                 active: Bool = true) -> FinishAndPaste.Action {
+            intent.key(code: code, flags: flags, down: down, modifier: modifier,
+                       repeated: repeated, enabled: enabled, active: active)
+        }
+        expect(key(enabled: false) == .pass && !intent.pending, "flag off never intercepts Command-V")
+        expect(key(active: false) == .pass, "idle Command-V remains normal paste")
+        expect(key(flags: 0) == .pass, "plain V remains ordinary typing")
+        expect(key(flags: 0x120000) == .pass, "Command-Shift-V is not the shortcut")
+        expect(key(repeated: true) == .pass, "a key held before recording cannot request paste")
+        var pasteGate = CaptureGate(); pasteGate.approved = true; pasteGate.ready = true
+        expect(pasteGate.press(now: 1), "start shortcut recording")
+        expect(key() == .request && intent.pending, "held Right Command plus V requests paste")
+        expect(pasteGate.release(now: 3), "shortcut uses normal capture acceptance")
+        expect(!pasteGate.release(now: 4), "physical hotkey release cannot submit twice")
+        expect(key(54, flags: 0, down: false, modifier: true) == .pass && intent.pending, "hotkey release preserves intent")
+        expect(key(repeated: true) == .swallow, "V autorepeat is suppressed")
+        expect(intent.take() && !intent.take(), "successful copy consumes paste exactly once")
+        expect(key(repeated: true, active: false) == .swallow, "repeat cannot paste twice after fast completion")
+        expect(key(down: false, active: false) == .swallow, "matching V release is suppressed")
+        expect(key(active: false) == .pass, "subsequent idle paste works")
+        expect(key(flags: 0x100008) == .request, "left Command-V also queues during transcription")
+        expect(key(down: false) == .swallow, "finish request key pair")
+        expect(key(0, flags: 0) == .cancel && !intent.take(), "typing cancels pending paste but is passed to the app")
+        expect(key() == .request, "explicit new request can requeue")
+        expect(key(down: false) == .swallow, "release requeue key")
+        expect(key(53, flags: 0) == .cancel && !intent.pending, "Escape cancels pending paste")
+        for code: Int64 in [58, 59, 60] {
+            expect(key() == .request, "queue modifier cancellation test")
+            _ = key(down: false)
+            let item = dictationKeys.first { $0.code == code }!
+            expect(key(code, flags: item.aggregate | item.side, down: false, modifier: true) == .cancel,
+                   "other modifier press cancels paste")
+        }
+        for (code, flags): (Int64, UInt64) in [(57, 0x10000), (63, 0x800000)] {
+            expect(key() == .request, "queue caps lock/function cancellation")
+            _ = key(down: false)
+            expect(key(code, flags: flags, down: false, modifier: true) == .cancel, "caps lock and function cancel pending paste")
+        }
+        expect(key() == .request, "queue asynchronous clipboard copy")
+        _ = key(down: false)
+        expect(key(0, flags: 0) == .cancel && !intent.take(), "cancellation remains effective until clipboard copy completes")
+        expect(key() == .request, "queue failure scenario")
+        _ = key(down: false); intent.cancel()
+        expect(!intent.take(), "empty result, failure, stop, or tap loss clears pending paste")
+        // Real ordinary-paste sequence: right Command starts a tentative capture,
+        // but V before the hold threshold must reach the destination unchanged.
+        for elapsed in [0.01, 0.5, 1.499] {
+            intent = FinishAndPaste(); pasteGate = CaptureGate()
+            pasteGate.approved = true; pasteGate.ready = true
+            expect(pasteGate.press(now: 10), "start tentative capture for ordinary paste")
+            expect(key(active: pasteGate.canFinish(now: 10 + elapsed)) == .pass,
+                   "quick Command-V passes through instead of swallowing the user's clipboard")
+            pasteGate.otherKey = true // The normal event path still cancels this capture.
+            expect(key(down: false, active: pasteGate.canFinish(now: 12)) == .pass, "ordinary V release passes through")
+            expect(key(repeated: true, active: pasteGate.canFinish(now: 12)) == .pass, "held ordinary paste never turns into dictation")
+            expect(!pasteGate.release(now: 12) && !intent.take(), "ordinary paste cannot later submit audio")
+        }
+        intent = FinishAndPaste(); pasteGate.ready = true
+        expect(pasteGate.press(now: 20), "start deliberate recording")
+        expect(key(active: pasteGate.canFinish(now: 21.5)) == .request, "exact hold threshold enables finish-and-paste")
+        expect(pasteGate.release(now: 21.5), "eligible shortcut submits exactly once")
+        _ = key(down: false); intent.cancel(); pasteGate.ready = true
+        expect(pasteGate.press(now: 30), "start contaminated recording")
+        pasteGate.otherKey = true
+        expect(key(active: pasteGate.canFinish(now: 32)) == .pass, "cancelled recording must not intercept normal paste")
+        expect(!pasteGate.release(now: 32) && !intent.take(), "paste cannot revive contaminated audio")
+        expect(pasteGate.press(now: 40), "start maximum duration test")
+        expect(!pasteGate.canFinish(now: 641), "expired capture cannot intercept paste")
+        pasteGate.cancel()
+        // Flag-off policy leaves legacy contamination and release behavior intact.
+        intent = FinishAndPaste(); pasteGate.ready = true
+        expect(pasteGate.press(now: 30), "start flag-off regression")
+        if key(enabled: false) == .pass { pasteGate.otherKey = true }
+        expect(!pasteGate.release(now: 32) && !intent.pending, "flag-off Command-V still cancels recording as before")
+        expect(defaultClipboard.zoomPercent == 100, "existing settings default to normal zoom")
+        var zoomSettings = AppSettings(); zoomSettings.zoomPercent = 130
+        expect(trySettings(zoomSettings).zoomPercent == 130, "zoom persists across restart")
+        let oversizedZoom = try AppSettings.fromData(Data("{\"zoom_percent\":999}".utf8))
+        let undersizedZoom = try AppSettings.fromData(Data("{\"zoom_percent\":10}".utf8))
+        expect(oversizedZoom.zoomPercent == 150 && undersizedZoom.zoomPercent == 80, "saved zoom is bounded")
         let settings = AppSettings()
         let roundtrip = try JSONDecoder().decode(AppSettings.self, from: JSONEncoder().encode(settings))
         expect(roundtrip.notesDirectory == settings.notesDirectory, "settings roundtrip")

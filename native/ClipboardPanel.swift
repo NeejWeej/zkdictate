@@ -25,7 +25,7 @@ final class ClipboardPreview: NSStackView {
     required init?(coder: NSCoder) { fatalError("Not used") }
     func update(_ backup: ClipboardBackup?, visible: Bool, seconds: Int, canRestore: Bool) {
         restore.isEnabled = canRestore
-        detail.stringValue = backup == nil ? "No backup — not captured, expired, or cleared" : "Expires in \(seconds / 60)m \(seconds % 60)s"
+        detail.stringValue = backup == nil ? "No saved copy" : "Expires in \(seconds / 60)m \(seconds % 60)s"
         guard visible, let backup else {
             shownID = nil; preview.stringValue = ""; picture.image = nil
             preview.isHidden = true; picture.isHidden = true; return
@@ -85,15 +85,25 @@ final class ClipboardPane: NSObject {
         previewButton = NSButton(checkboxWithTitle: "Show previews", target: self, action: #selector(refresh))
         hideOnDeactivateButton = NSButton(checkboxWithTitle: "Hide previews when leaving the app", target: self, action: #selector(changePreviewPrivacy))
         let clear = NSButton(title: "Clear backups", target: self, action: #selector(clearBackups))
-        last = ClipboardPreview(title: "Restore before last copy", target: self, action: #selector(restoreLast))
-        original = ClipboardPreview(title: "Restore before dictation", target: self, action: #selector(restoreOriginal))
-        let intro = NSTextField(wrappingLabelWithString: "Optional, memory-only backups before ZK Dictate copies text. Off by default. Clear on expiry, sleep, lock, or quit. Maximum 16 MB per backup.")
-        let explanation = NSTextField(wrappingLabelWithString: "Before last copy: what was there just before our latest copy. Before dictation: the last content copied outside ZK Dictate. They can be the same.")
-        status = NSTextField(wrappingLabelWithString: "")
-        let options = NSStackView(views: [NSTextField(labelWithString: "Keep for:"), expiryPicker]); options.spacing = 10
-        let actions = NSStackView(views: [previewButton, clear]); actions.spacing = 10
-        let stack = NSStackView(views: [NSTextField(labelWithString: "Clipboard backups"), enabledButton, intro, options, actions, hideOnDeactivateButton, explanation, last, original, status])
-        stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 14; stack.translatesAutoresizingMaskIntoConstraints = false
+        last = ClipboardPreview(title: "Restore this copy", target: self, action: #selector(restoreLast))
+        original = ClipboardPreview(title: "Restore this copy", target: self, action: #selector(restoreOriginal))
+        let heading = NSTextField(labelWithString: "Clipboard"); heading.font = .boldSystemFont(ofSize: 24)
+        let intro = NSTextField(wrappingLabelWithString: "Bring back what was copied before your words.")
+        status = NSTextField(wrappingLabelWithString: ""); status.textColor = .secondaryLabelColor
+        let options = NSStackView(views: [NSTextField(labelWithString: "Keep for"), expiryPicker]); options.spacing = 10
+        let originalSection = InterfaceSection("Before dictation", caption: "The last thing you copied outside ZK Dictate.", views: [original])
+        let lastSection = InterfaceSection("Before last copy", caption: "What was on the clipboard before our most recent copy.", views: [last])
+        let preferencesSection = InterfaceSection("Backup settings", caption: "Choose what to keep and when to clear it.", views: [
+            enabledButton, options, hideOnDeactivateButton, clear,
+            NSTextField(wrappingLabelWithString: "Backups stay in memory and clear on expiry, sleep, lock, or quit. Up to 16 MB per copy.")
+        ], collapsible: true)
+        let stack = NSStackView(views: [heading, intro, previewButton, originalSection, lastSection, status, preferencesSection])
+        stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 24; stack.translatesAutoresizingMaskIntoConstraints = false
+        for section in [originalSection, lastSection, preferencesSection] {
+            section.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        }
+        intro.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        status.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         let scroll = view; scroll.hasVerticalScroller = true; scroll.translatesAutoresizingMaskIntoConstraints = false
         let document = ClipboardDocument(); document.translatesAutoresizingMaskIntoConstraints = false
         scroll.documentView = document; document.addSubview(stack)
@@ -120,7 +130,7 @@ final class ClipboardPane: NSObject {
             let backup = manager.backup(slot)
             card.update(backup, visible: visible, seconds: backup.map(manager.remaining) ?? 0, canRestore: canInteract() && manager.canRestore(slot))
         }
-        status.stringValue = manager.busy ? "Checking the clipboard…" : operationMessage ?? "Restore is available only while the clipboard still contains our latest copy or restore. Copying elsewhere disables restore."
+        status.stringValue = manager.busy ? "Checking the clipboard…" : operationMessage ?? (preferences.clipboardBackups ? "Copying in another app disables restore until your next dictation." : "Open Backup settings to turn backups on.")
     }
     @objc private func changeSettings() {
         operationMessage = nil

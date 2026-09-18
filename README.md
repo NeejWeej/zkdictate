@@ -39,8 +39,8 @@ You can also run `bash install.sh` from the downloaded folder.
 
 To change the hotkey, stop dictation, click **Record Key…**, and press a single
 Command, Option, Control, Shift, or F1–F20 key. Escape cancels; letters and Space are rejected.
-You can also change the notes folder in the app. **Pause** temporarily disables
-recording; **Stop Dictation** turns off recording and unloads the model. Closing the app stops everything.
+You can also change the notes folder in the app. **Stop Dictation** turns off
+recording and unloads the model. **Start Dictation** loads it again. Closing the app stops everything.
 The latest transcript stays visible for copying or saving again.
 
 Want to recover what was on the clipboard? Select the **Clipboard** tab and enable
@@ -77,3 +77,37 @@ See [architecture](docs/architecture.md) and [release checks](docs/release-check
 for implementation details and the remaining checks before a packaged release.
 
 Developed with Codex.
+
+### Experimental finish and paste
+
+Stop dictation, then enable **Finish and paste with ⌘V (experimental)** and start
+again. This setting (`finish_and_paste`) defaults to off. macOS Accessibility
+access is required when enabled; the normal mode still uses a listen-only tap.
+
+In **Copy to clipboard** mode, press V while holding Right Command to finish the
+recording and paste when ready. You can also press ⌘V during transcription.
+Quick ⌘V presses still paste normally: interception starts only after 1.5 seconds
+of clean recording. A recording cancelled by another key never intercepts paste.
+Repeated shortcut presses queue one paste. Releasing Command does not cancel it;
+other key presses (including Escape) cancel the queued paste while transcription
+continues to the clipboard. Stop, sleep, failure, or an empty result also clear it.
+The paste goes to the cursor at completion, without tracking apps or focus, and
+never sends Enter. Note/file output modes keep their normal behavior.
+
+To revert the experiment, stop dictation, uncheck the setting, and start again.
+
+### Readability and dictation status
+
+Use **⌘+** (or **⌘=**) and **⌘−** to resize text throughout both panes, and
+**⌘0** to reset. The window also has zoom buttons. Zoom (80–150%) persists.
+These shortcuts apply only inside ZK Dictate.
+
+The large status banner and Start/Stop controls remain above both panes when
+scrolling. It distinguishes stopped, loading, ready, recording (mic on),
+and transcribing (mic off), and explicitly marks a queued automatic paste.
+Side-by-side panes share added window width; the latest transcript appears first.
+
+Controls are grouped into spaced sections: **Your words**, **How you record**,
+**Where your words go**, and **Setup & permissions**. Setup and **Backup settings**
+expand on click; both clipboard restore choices remain visible in their own cards.
+Folder/file controls appear only for the selected output mode.

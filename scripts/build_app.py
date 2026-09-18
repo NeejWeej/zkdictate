@@ -34,7 +34,7 @@ plist = {
 entitlements = root / 'native/entitlements.plist'
 common = ['xcrun', 'swiftc', '-swift-version', '5', '-O', '-target', 'arm64-apple-macosx14.0', '-module-cache-path', str(root / 'build/swift-cache')]
 native = root / 'native'
-subprocess.run(common + [str(native / n) for n in ['Core.swift', 'Runtime.swift', 'Recorder.swift', 'AppSettings.swift', 'Clipboard.swift', 'ClipboardPanel.swift', 'WorkerProcess.swift', 'App.swift']] + ['-framework', 'AppKit', '-framework', 'AVFoundation', '-o', str(app / 'Contents/MacOS/ZK Dictate')], check=True)
+subprocess.run(common + [str(native / n) for n in ['Core.swift', 'Runtime.swift', 'Recorder.swift', 'AppSettings.swift', 'Clipboard.swift', 'ClipboardPanel.swift', 'Interface.swift', 'WorkerProcess.swift', 'App.swift']] + ['-framework', 'AppKit', '-framework', 'AVFoundation', '-o', str(app / 'Contents/MacOS/ZK Dictate')], check=True)
 shutil.copy2(root / 'src/zkdictate/app_worker.py', app / 'Contents/Resources/app_worker.py')
 shutil.copy2(root / 'LICENSE', app / 'Contents/Resources/LICENSE')
 subprocess.run(['codesign', '--force', '--sign', args.identity, '--options', 'runtime', '--entitlements', str(entitlements), str(app)], check=True)

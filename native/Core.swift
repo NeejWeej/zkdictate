@@ -4,7 +4,6 @@ import Foundation
 struct CaptureGate {
     var approved = false
     var ready = false
-    var paused = false
     var recording = false
     var started = 0.0
     var otherKey = false
@@ -12,15 +11,18 @@ struct CaptureGate {
     let maximumHold = 600.0
 
     mutating func press(now: Double) -> Bool {
-        guard approved && ready && !paused && !recording else { return false }
+        guard approved && ready && !recording else { return false }
         recording = true; started = now; otherKey = false
         return true
     }
     mutating func cancel() { recording = false; otherKey = false }
+    func canFinish(now: Double) -> Bool {
+        recording && approved && ready && !otherKey && now - started >= minimumHold && now - started <= maximumHold
+    }
     mutating func release(now: Double) -> Bool {
         guard recording else { return false }
+        let accepted = canFinish(now: now)
         recording = false
-        let accepted = approved && ready && !paused && !otherKey && now - started >= minimumHold && now - started <= maximumHold
         if accepted { ready = false }
         return accepted
     }
@@ -69,4 +71,40 @@ func recordableHotkey(code: Int64, flags: UInt64, modifierEvent: Bool) -> String
           modifierHotkeyIsDown(key.name, flags: flags),
           flags & key.pair & ~key.side == 0 else { return nil }
     return key.name
+}
+
+// Optional shortcut policy, independent of capture and clipboard implementation.
+// The V up/repeat events remain swallowed even if transcription completes first.
+struct FinishAndPaste {
+    private(set) var pending = false
+    private var swallowedV = false
+    enum Action { case pass, swallow, request, cancel }
+
+    mutating func key(code: Int64, flags: UInt64, down: Bool, modifier: Bool,
+                      repeated: Bool = false, enabled: Bool, active: Bool) -> Action {
+        guard enabled else { return .pass }
+        if code == 9 && swallowedV {
+            if !down { swallowedV = false }
+            return .swallow
+        }
+        if code == 9 && down && !modifier && !repeated && active && flags & 0x1e0000 == 0x100000 {
+            swallowedV = true; pending = true
+            return .request
+        }
+        // Releases never cancel. Command can be pressed again to request a paste
+        // during transcription; other modifier presses cancel the queued paste.
+        let modifierPressed: Bool
+        if let key = dictationKeys.first(where: { $0.code == code && $0.aggregate != 0 }) {
+            modifierPressed = modifierHotkeyIsDown(key.name, flags: flags)
+        } else { modifierPressed = (code == 57 && flags & 0x10000 != 0) || (code == 63 && flags & 0x800000 != 0) }
+        if pending && ((!modifier && down) || (modifier && modifierPressed && code != 54 && code != 55)) {
+            pending = false
+            return .cancel
+        }
+        return .pass
+    }
+    mutating func cancel() { pending = false }
+    mutating func take() -> Bool {
+        let result = pending; pending = false; return result
+    }
 }

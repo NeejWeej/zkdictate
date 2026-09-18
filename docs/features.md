@@ -224,11 +224,11 @@ You can disable backups and click **Copy Transcript** if you prefer to replace t
 clipboard without saving it. Unexpected system write failures are reported; the
 app attempts to recover the previous clipboard while it still owns it.
 
-## Pause, stop, sleep, and quit
+## Start, stop, sleep, and quit
 
 | Action | What happens |
 | --- | --- |
-| Pause | Disables new recordings while keeping the model loaded. Resume makes dictation available again. Available when ready and not recording/transcribing. |
+| Start Dictation | Loads the model and enables the recording hotkey once ready. |
 | Stop Dictation | Turns off recording, unloads the model, and discards audio waiting for retry. The latest displayed transcript remains. |
 | Close the window / Quit | Quits the app and stops recording and its worker. The menu-bar item does not keep it running. |
 | Mac sleeps / you switch out of your macOS user session | Stops dictation and discards audio waiting for retry. Start dictation again when you return. Switching between ordinary apps does not stop dictation. |

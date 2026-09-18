@@ -19,7 +19,7 @@ mocked model loading and does not run real-model or Swift worker-pipe integratio
 
 - [ ] Microphone → transcript → clipboard tested in the current app.
 - [ ] Folder selection, preferences after relaunch, and note/file output tested.
-- [ ] Pause, Stop, close, quit, sleep, and retry tested together.
+- [ ] Start, Stop, close, quit, sleep, and retry tested together.
 - [ ] Installation tested on a fresh Apple Silicon Mac.
 - [ ] Upgrade permission behavior tested with a stable signing identity.
 - [ ] Portable packaging and notarization completed.

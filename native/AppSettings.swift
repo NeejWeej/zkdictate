@@ -11,13 +11,17 @@ struct AppSettings: Codable {
     var outputMode = "clipboard"
     var filePath: String? = nil
     var hotkey = "right_cmd"
+    var finishAndPaste = false
     var beep = false
     var clipboardBackups = false
     var clipboardMinutes = 5
     var sideBySide = false
+    var zoomPercent = 100
     var hidePreviewsOnDeactivate = true
     var model = TranscriptionModel.whisper8bit
     enum CodingKeys: String, CodingKey {
+        case zoomPercent = "zoom_percent"
+        case finishAndPaste = "finish_and_paste"
         case notesDirectory = "notes_directory", outputMode = "output_mode", filePath = "file_path", hotkey, beep, model, clipboardBackups = "clipboard_backups", clipboardMinutes = "clipboard_minutes", sideBySide = "side_by_side", hidePreviewsOnDeactivate = "hide_previews_on_deactivate"
     }
     static var url: URL { FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/ZK Dictate/settings.json") }
@@ -37,9 +41,11 @@ struct AppSettings: Codable {
         // The retired either-side option becomes one explicit key.
         if values["hotkey"] as? String == "cmd" { result.hotkey = "right_cmd" }
         result.hidePreviewsOnDeactivate = values["hide_previews_on_deactivate"] as? Bool ?? true
+        if let zoom = values["zoom_percent"] as? Int { result.zoomPercent = min(150, max(80, zoom)) }
         result.sideBySide = values["side_by_side"] as? Bool ?? false
         result.clipboardBackups = values["clipboard_backups"] as? Bool ?? false
         if let minutes = values["clipboard_minutes"] as? Int, [1, 5, 15].contains(minutes) { result.clipboardMinutes = minutes }
+        result.finishAndPaste = values["finish_and_paste"] as? Bool ?? false
         result.beep = values["beep"] as? Bool ?? false
         result.model = (values["model"] as? String).flatMap(TranscriptionModel.init(rawValue:)) ?? .whisper8bit
         return result
