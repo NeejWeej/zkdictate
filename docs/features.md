@@ -231,7 +231,7 @@ app attempts to recover the previous clipboard while it still owns it.
 | Start Dictation | Loads the model and enables the recording hotkey once ready. |
 | Stop Dictation | Turns off recording, unloads the model, and discards audio waiting for retry. The latest displayed transcript remains. |
 | Close the window / Quit | Quits the app and stops recording and its worker. The menu-bar item does not keep it running. |
-| Mac sleeps / you switch out of your macOS user session | Stops dictation and discards audio waiting for retry. Start dictation again when you return. Switching between ordinary apps does not stop dictation. |
+| Mac locks, sleeps, or you switch out of your macOS user session | Pauses dictation and discards active recording, audio waiting for retry, and pending paste actions. If dictation was enabled, it reloads automatically after you return and all pause conditions clear. Wait for Ready, then press the hotkey afresh. Explicit Stop stays stopped. Switching between ordinary apps does not pause dictation. |
 | Minimize the window | Keeps the session running. The ZK menu can show the window, stop dictation, or quit. |
 
 Only one app instance runs at a time.

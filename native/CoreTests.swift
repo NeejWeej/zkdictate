@@ -11,6 +11,23 @@ struct NativeTests {
         try! AppSettings.fromData(JSONEncoder().encode(value))
     }
     static func main() throws {
+        var session = DictationSession()
+        session.pause(.lock)
+        expect(!session.resume(.lock), "disabled dictation stays disabled")
+        session.enabled = true
+        session.pause(.lock); session.pause(.lock); session.pause(.sleep)
+        expect(!session.resume(.sleep), "wake while locked cannot resume")
+        expect(session.resume(.lock), "unlock resumes enabled dictation once")
+        expect(!session.resume(.lock), "duplicate unlock cannot restart worker")
+        session.pause(.userSession); session.pause(.sleep)
+        expect(!session.resume(.userSession), "active session waits for wake")
+        expect(session.resume(.sleep), "last pause reason resumes")
+        session.pause(.lock); session.enabled = false
+        expect(!session.resume(.lock), "explicit Stop during pause prevents resume")
+        var fresh = FreshHotkey(waitingForRelease: true)
+        expect(!fresh.allows(pressed: true), "held key cannot start on resume")
+        expect(!fresh.allows(pressed: false), "first release cannot submit recording")
+        expect(fresh.allows(pressed: true), "fresh press can start recording")
         // Hardware-like modifier edges must work without querying live keys.
         for (name, mask, side, other) in [("right_cmd", UInt64(0x100000), UInt64(0x10), UInt64(0x08)),
                                          ("left_cmd", 0x100000, 0x08, 0x10),

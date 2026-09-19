@@ -39,6 +39,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var workerFailed = false
     private var generation = UUID()
     private var gate = CaptureGate()
+    private var dictationSession = DictationSession()
+    private var freshHotkey = FreshHotkey()
     private var recorder = Recorder()
     private var tap: CFMachPort?
     private var tapSource: CFRunLoopSource?
@@ -77,7 +79,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(clearClipboardBackups), name: NSWorkspace.screensDidSleepNotification, object: nil)
         DistributedNotificationCenter.default().addObserver(self, selector: #selector(locked), name: Notification.Name("com.apple.screenIsLocked"), object: nil)
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(sleeping), name: NSWorkspace.willSleepNotification, object: nil)
-        NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(sleeping), name: NSWorkspace.sessionDidResignActiveNotification, object: nil)
+        NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(sessionInactive), name: NSWorkspace.sessionDidResignActiveNotification, object: nil)
+        NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(waking), name: NSWorkspace.didWakeNotification, object: nil)
+        NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(sessionActive), name: NSWorkspace.sessionDidBecomeActiveNotification, object: nil)
+        DistributedNotificationCenter.default().addObserver(self, selector: #selector(unlocked), name: Notification.Name("com.apple.screenIsUnlocked"), object: nil)
         timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
             guard let self else { return }
             self.clipboardManager.tick()
@@ -242,7 +247,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         recordKeyButton.title = choosingKey ? "Cancel" : "Record Key…"
         startButton.isEnabled = !choosingKey
         modelPicker.isEnabled = worker == nil && !busy && pendingAudio == nil && !choosingKey
-        startButton.title = worker != nil ? "Stop Dictation" : pendingAudio != nil ? "Retry Transcription" : workerFailed ? "Retry" : "Start Dictation"
+        startButton.title = worker != nil || dictationSession.enabled ? "Stop Dictation" : pendingAudio != nil ? "Retry Transcription" : workerFailed ? "Retry" : "Start Dictation"
     }
     private func updateActivity() {
         guard activityLabel != nil else { return }
@@ -255,7 +260,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             title = pasteIntent.pending ? "TRANSCRIBING → PASTE · Mic off" : "TRANSCRIBING · Mic off"
             color = .systemOrange
         } else if worker == nil {
-            title = workerFailed ? "ERROR · Mic off" : "STOPPED · Mic off"; color = workerFailed ? .systemRed : .secondaryLabelColor
+            title = dictationSession.enabled && dictationSession.paused ? "PAUSED · Mic off" : workerFailed ? "ERROR · Mic off" : "STOPPED · Mic off"; color = workerFailed ? .systemRed : .secondaryLabelColor
         } else if gate.ready {
             title = "READY · Hold \(hotkeyTitle(settings.hotkey))"; color = .systemGreen
         } else {
@@ -375,9 +380,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if let data = try? JSONSerialization.data(withJSONObject: snapshot) { try? data.write(to: appCacheDirectory.appendingPathComponent("permissions.json"), options: .atomic) }
         return mic && input
     }
-    @objc func toggleStart() { if worker != nil { stopAction() } else { startWorker() } }
+    @objc func toggleStart() { if worker != nil || dictationSession.enabled { stopAction() } else { startWorker() } }
     private func startWorker() {
-        guard !choosingKey else { return }
+        guard !dictationSession.paused, worker == nil, !choosingKey else { return }
         guard settingsError == nil else { show("Choose a notes folder to repair settings first."); return }
         guard refreshPermissions() else { show("Open Setup & permissions to allow microphone and Input Monitoring, then restart if needed."); return }
         guard settings.outputMode != "file" || settings.filePath != nil else { show("Choose an output file first."); return }
@@ -390,6 +395,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         generation = UUID(); let session = generation
         workerFailed = false
         let service = WorkerProcess(); worker = service
+        dictationSession.enabled = true
         gate.approved = true; gate.ready = false
         deadline = ProcessInfo.processInfo.systemUptime + 600
         service.onEvent = { [weak self] object in guard let self, self.generation == session else { return }; self.workerEvent(object) }
@@ -403,6 +409,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         case "loading": break
         case "ready":
             deadline = nil; gate.ready = true
+            freshHotkey.waitingForRelease = (allowedHotkeys[settings.hotkey] ?? []).contains {
+                CGEventSource.keyState(.combinedSessionState, key: CGKeyCode($0))
+            }
             if let audio = pendingAudio { submit(audio) } else { show("Ready — hold \(hotkeyTitle(settings.hotkey)) for at least 1.5 seconds to speak.") }
         case "transcript":
             guard let id = object["id"] as? String, id == pendingID, let text = object["text"] as? String else { failWorker("Invalid transcription response. Click Retry."); return }
@@ -428,6 +437,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         show(pasteIntent.pending ? "Transcribing… will paste" : "Transcribing…"); worker?.transcribe(audio, id: pendingID!); updateControls()
     }
     private func failWorker(_ message: String) {
+        dictationSession.enabled = false
         shutdownWorker(); workerFailed = true; show(message); updateControls()
     }
     private func shutdownWorker() {
@@ -437,9 +447,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if let tapSource { CFRunLoopRemoveSource(CFRunLoopGetMain(), tapSource, .commonModes) }
         tap = nil; tapSource = nil
     }
-    @objc func stopAction() { cancelKeySelection(); shutdownWorker(); clipboardManager.cancelPending(); workerFailed = false; pendingAudio = nil; outputSnapshot = nil; show("Stopped. Microphone and transcription worker are off."); updateControls() }
-    @objc func sleeping() { clearClipboardBackups(); stopAction() }
-    @objc func locked() { sleeping() }
+    @objc func stopAction() { dictationSession.enabled = false; clearSession() }
+    private func clearSession() { cancelKeySelection(); shutdownWorker(); clipboardManager.cancelPending(); workerFailed = false; pendingAudio = nil; outputSnapshot = nil; show("Stopped. Microphone and transcription worker are off."); updateControls() }
+    private func pauseSession(_ reason: DictationSession.PauseReason) {
+        dictationSession.pause(reason)
+        clearClipboardBackups(); clearSession()
+        if dictationSession.enabled { show("Paused. Dictation will be ready again when you return.") }
+    }
+    private func resumeSession(_ reason: DictationSession.PauseReason) {
+        guard dictationSession.resume(reason) else { return }
+        // A failed restart must leave the ordinary Start/Retry action available.
+        dictationSession.enabled = false
+        startWorker(); updateControls()
+    }
+    @objc func sleeping() { pauseSession(.sleep) }
+    @objc func waking() { resumeSession(.sleep) }
+    @objc func locked() { pauseSession(.lock) }
+    @objc func unlocked() { resumeSession(.lock) }
+    @objc func sessionInactive() { pauseSession(.userSession) }
+    @objc func sessionActive() { resumeSession(.userSession) }
     @objc func clearClipboardBackups() { clipboardManager.clear(); clipboardPane?.hidePreviews() }
     @objc private func changeSection() { applyLayout(resizeWindow: false) }
     @objc private func changeLayout() {
@@ -551,6 +577,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         let pressed = type == .keyDown || (type == .flagsChanged && modifierHotkeyIsDown(settings.hotkey, flags: event.flags.rawValue))
         if event.getIntegerValueField(.keyboardEventAutorepeat) != 0 { return false }
+        guard freshHotkey.allows(pressed: pressed) else { return false }
         if pressed {
             guard !clipboardManager.busy else { show("Wait for the clipboard operation to finish."); return false }
             guard recordableHotkey(code: code, flags: event.flags.rawValue, modifierEvent: type == .flagsChanged) == settings.hotkey else {

@@ -108,3 +108,25 @@ struct FinishAndPaste {
         let result = pending; pending = false; return result
     }
 }
+
+// Overlapping lock, sleep, and user-session events must all clear before resuming.
+struct DictationSession {
+    enum PauseReason: Hashable { case lock, sleep, userSession }
+    var enabled = false
+    private(set) var reasons: Set<PauseReason> = []
+    var paused: Bool { !reasons.isEmpty }
+    mutating func pause(_ reason: PauseReason) { reasons.insert(reason) }
+    mutating func resume(_ reason: PauseReason) -> Bool {
+        let removed = reasons.remove(reason) != nil
+        return removed && reasons.isEmpty && enabled
+    }
+}
+
+struct FreshHotkey {
+    var waitingForRelease = false
+    mutating func allows(pressed: Bool) -> Bool {
+        guard waitingForRelease else { return true }
+        if !pressed { waitingForRelease = false }
+        return false
+    }
+}
