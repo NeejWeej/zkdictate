@@ -101,8 +101,10 @@ To revert the experiment, stop dictation, uncheck the setting, and start again.
 
 ### Text processing
 
-Optional steps in **Text processing** rewrite transcripts before output. **Run
-external command** pipes each transcript through a program you choose, without a
+Optional steps in **Text processing** rewrite transcripts before output.
+**Convert spoken punctuation** turns words such as “comma”, “open parenthesis”,
+“slash”, “dollar sign”, and “new paragraph” into symbols; say “literal” first to keep
+the word. **Run external command** pipes each transcript through a program you choose, without a
 shell. Steps default to off, apply from the next recording, and a failed step
 keeps the unchanged transcript. See the [feature guide](docs/features.md#text-processing).
 

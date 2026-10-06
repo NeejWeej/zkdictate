@@ -20,7 +20,8 @@ that audio. Native watchdogs cover model loading and transcription timeouts.
 
 Each request may also list text processors, snapshotted from settings with the
 other output choices. `text_processors.py` applies them after transcription in a
-fixed registry order. A failing step is skipped with a content-free warning in the
+fixed registry order: spoken punctuation, then the external command. Spoken
+punctuation is a data table of phrases, symbols, and spacing rules. A failing step is skipped with a content-free warning in the
 transcript response, keeping the text from before it. The external command runs
 without a shell, in its own process group, with a 5 second deadline and 1 MB
 output cap. The app bundle copies this module beside `app_worker.py`, which loads

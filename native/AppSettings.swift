@@ -8,9 +8,11 @@ enum TranscriptionModel: String, Codable, CaseIterable {
 
 /// Worker-side transcript rewriting steps; the worker applies them in its own fixed order.
 enum TextProcessor: String, Codable, CaseIterable {
+    case spokenCommands = "spoken_commands"
     case externalCommand = "external_command"
     var title: String {
         switch self {
+        case .spokenCommands: return "Convert spoken punctuation (“comma”, “new line”)"
         case .externalCommand: return "Run external command"
         }
     }
@@ -72,6 +74,7 @@ struct AppSettings: Codable {
     var processorRequest: [[String: Any]] {
         textProcessors.map { processor in
             switch processor {
+            case .spokenCommands: return ["name": processor.rawValue]
             case .externalCommand: return ["name": processor.rawValue, "path": externalCommandPath ?? "", "args": externalCommandArgs]
             }
         }

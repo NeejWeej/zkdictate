@@ -133,6 +133,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             let button = NSButton(checkboxWithTitle: processor.title, target: self, action: #selector(changeProcessor))
             button.state = settings.textProcessors.contains(processor) ? .on : .off; processorButtons[processor] = button
         }
+        processorButtons[.spokenCommands]?.toolTip = "Turns spoken words such as “period”, “comma”, “open parenthesis”, and “new paragraph” into symbols. Runs before the external command."
         processorButtons[.externalCommand]?.toolTip = "Sends the transcript to the chosen program on standard input and uses its output. If it fails, takes over 5 seconds, or returns nothing, the unchanged transcript is used."
         commandLabel = NSTextField(wrappingLabelWithString: ""); commandLabel.isSelectable = true; updateCommand()
         commandButton = NSButton(title: "Choose Command…", target: self, action: #selector(chooseCommand))

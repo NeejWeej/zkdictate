@@ -152,11 +152,53 @@ waiting to retry.
 
 | Step | What it does |
 | --- | --- |
+| Convert spoken punctuation | Turns spoken words into symbols, listed below. Runs first. |
 | Run external command | Sends the transcript to a program you choose on standard input and uses its standard output, trimmed. |
 
 **Choose Command…** picks the program, which must be executable. It runs directly,
 without a shell. To pass arguments, add them as a list under
 `external_command_args` in `settings.json`. Its standard error is discarded.
+
+### Spoken punctuation
+
+| Say | Get |
+| --- | --- |
+| period, full stop | `.` |
+| comma | `,` |
+| question mark | `?` |
+| exclamation point, exclamation mark | `!` |
+| colon / semicolon | `:` / `;` |
+| ellipsis, dot dot dot | `...` |
+| open / close (or closed) parenthesis, paren | `(` / `)` |
+| open / close (or closed) bracket | `[` / `]` |
+| open / close (or closed) brace, curly brace | `{` / `}` |
+| open quote / close quote, closed quote, end quote, unquote | `"` / `"` |
+| quote, single quote, backtick | `"`, `'`, `` ` ``, opening and closing in turn |
+| hyphen, slash, forward slash, backslash, at sign, underscore, caret, apostrophe | `-` `/` `\` `@` `_` `^` `'`, joining the words beside it |
+| dollar sign, hash sign, pound sign, hashtag, tilde | `$` `#` `#` `#` `~`, joined to the next word |
+| percent sign | `%`, joined to the word before |
+| dash, ampersand, asterisk, plus sign, equals sign | ` — ` ` & ` ` * ` ` + ` ` = `, with a space each side |
+| vertical bar, pipe sign, less than sign, greater than sign | ` \| ` ` < ` ` > `, with a space each side |
+| new line / new paragraph / tab key | one / two line breaks / a tab |
+
+So "and slash or" becomes `and/or`, "dollar sign 5" becomes `$5`, "50 percent
+sign" becomes `50%`, and "matt at sign example.com" becomes `matt@example.com`.
+Symbols that are also everyday words need their full name: "dollar sign", not
+"dollar"; "pipe sign", not "pipe"; "tab key", not "tab". "And sign" is not
+supported, because "read and sign" is ordinary speech.
+
+Words match in any capitalization, only as whole words. Whisper's own commas
+and periods around a spoken command are removed, so "Open parenthesis, foo, closed
+parenthesis." becomes `(foo)`. Spacing is fixed around symbols, and the word after
+a spoken period, question mark, or exclamation point is capitalized. Letters are
+never lowercased. Every command in a phrase converts, so "a slash and an open
+parenthesis and a closed parenthesis" becomes `a/and an (and a)`.
+
+Say **literal** before a command to keep its words: "the trial literal period"
+becomes `the trial period`. Whisper's commas around "literal" are ignored, so
+"the trial, literal, period." also gives `the trial period.` Without "literal",
+"slash", "caret", "underscore", "asterisk", "tilde", "backtick", and "apostrophe"
+always convert, even inside ordinary sentences.
 
 A step that fails never loses your words. If the command cannot start, exits with
 an error, takes more than 5 seconds, returns no text, returns more than 1 MB, or

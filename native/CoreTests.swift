@@ -231,6 +231,9 @@ struct NativeTests {
         expect(trySettings(processing).textProcessors == [.externalCommand] && trySettings(processing).externalCommandArgs == ["--mode", "x"], "processor settings survive save and load")
         let relative = try AppSettings.fromData(Data("{\"text_processors\":\"external_command\",\"external_command_path\":\"fix\",\"external_command_args\":[1]}".utf8))
         expect(relative.textProcessors.isEmpty && relative.externalCommandPath == nil && relative.externalCommandArgs.isEmpty, "malformed processor settings fall back to off")
+        let both = try AppSettings.fromData(Data("{\"text_processors\":[\"external_command\",\"spoken_commands\"]}".utf8))
+        expect(both.textProcessors == [.spokenCommands, .externalCommand], "processors keep the worker's fixed order")
+        expect(both.processorRequest.map { $0["name"] as? String } == ["spoken_commands", "external_command"], "both processors requested")
         var unchosen = AppSettings(); unchosen.textProcessors = [.externalCommand]
         expect(unchosen.processorRequest[0]["path"] as? String == "", "missing command is left for the worker to report")
         print("Native hotkey, capture gate, settings, and note output tests passed (no capture APIs linked).")
