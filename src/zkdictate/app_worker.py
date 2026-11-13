@@ -23,12 +23,14 @@ except ImportError:
 MODELS = {
     'whisper': 'mlx-community/whisper-large-v3-turbo',
     'whisper-8bit': 'mlx-community/whisper-large-v3-turbo-8bit',
+    'parakeet': 'mlx-community/parakeet-tdt-0.6b-v3',
 }
 
-# Revisions tested with both models; new installs must load the same artifacts.
+# Pinned revisions; new installs must load the same artifacts.
 MODEL_REVISIONS = {
     'whisper': 'a4aaeec0636e6fef84abdcbe3544cb2bf7e9f6fb',
     'whisper-8bit': '62103fc276a35fdc76e318f314d8ff47987fba89',
+    'parakeet': 'ed2b7e8c15f9aaa0b5772e2efb986255eaef7e15',
 }
 
 
@@ -42,12 +44,13 @@ def model_path(name):
         snapshot = Path(snapshot_download(repo_id=repo, revision=MODEL_REVISIONS[name], local_files_only=True))
         if not (snapshot / 'config.json').is_file() or not any(
             (snapshot / filename).is_file()
-            for filename in ('model.safetensors', 'weights.safetensors', 'weights.npz')
+            for filename in (('model.safetensors',) if name == 'parakeet' else
+                             ('model.safetensors', 'weights.safetensors', 'weights.npz'))
         ):
             raise LocalEntryNotFoundError('Incomplete cached model')
     except LocalEntryNotFoundError:
         snapshot = Path(snapshot_download(repo_id=repo, revision=MODEL_REVISIONS[name]))
-    if (snapshot / 'model.safetensors').exists():
+    if name != 'parakeet' and (snapshot / 'model.safetensors').exists():
         # mlx-whisper 0.4.x expects weights.safetensors. Keep this view alive for
         # the whole session so ModelHolder reuses the same model on every request.
         with tempfile.TemporaryDirectory(prefix='zkdictate-model-') as directory:
@@ -76,6 +79,44 @@ def decode_audio(value):
     return audio
 
 
+def transcribe_parakeet(model, audio):
+    """Decode recorded PCM in memory; bound encoder memory on long dictations.
+
+    Mirrors parakeet-mlx's file transcription chunking without writing audio
+    to disk or requiring ffmpeg. This runs only after the hotkey is released.
+    """
+    import mlx.core as mx
+    from parakeet_mlx.audio import get_logmel
+    from parakeet_mlx.alignment import (
+        merge_longest_contiguous, merge_longest_common_subsequence,
+        sentences_to_result, tokens_to_sentences,
+    )
+    config = model.preprocessor_config
+    if config.sample_rate != 16000:
+        raise ValueError('Parakeet requires a 16 kHz model')
+    chunk_samples, overlap_samples = 16000 * 30, 16000 * 5
+    tokens = []
+    for start in range(0, len(audio), chunk_samples - overlap_samples):
+        end = min(start + chunk_samples, len(audio))
+        chunk = mx.array(audio[start:end], dtype=mx.float32)
+        # Very short valid requests still need enough samples for the FFT.
+        if len(chunk) < config.n_fft:
+            chunk = mx.pad(chunk, [(0, config.n_fft - len(chunk))])
+        result = model.generate(get_logmel(chunk, config))[0]
+        if start == 0 and end == len(audio):
+            return result.text
+        for token in result.tokens:
+            token.start += start / 16000
+            token.end = token.start + token.duration
+        try:
+            tokens = merge_longest_contiguous(tokens, result.tokens, overlap_duration=5)
+        except RuntimeError:
+            tokens = merge_longest_common_subsequence(tokens, result.tokens, overlap_duration=5)
+        if end == len(audio):
+            break
+    return sentences_to_result(tokens_to_sentences(tokens)).text
+
+
 def engine(model_name="whisper-8bit"):
     wire = sys.stdout
     def emit(value):
@@ -86,10 +127,16 @@ def engine(model_name="whisper-8bit"):
             emit({'event': 'loading'})
             import importlib
             import mlx.core as mx
-            import mlx_whisper
-            module = importlib.import_module('mlx_whisper.transcribe')
-            model_name = resources.enter_context(model_path(model_name))
-            model = module.ModelHolder.get_model(model_name, mx.float16)
+            path = resources.enter_context(model_path(model_name))
+            if model_name == 'parakeet':
+                from parakeet_mlx import from_pretrained
+                model = from_pretrained(path)
+                transcribe = lambda audio: transcribe_parakeet(model, audio)
+            else:
+                import mlx_whisper
+                module = importlib.import_module('mlx_whisper.transcribe')
+                model = module.ModelHolder.get_model(path, mx.float16)
+                transcribe = lambda audio: mlx_whisper.transcribe(audio, path_or_hf_repo=path).get('text', '')
             mx.eval(model.parameters())
             emit({'event': 'ready'})
             while True:
@@ -106,8 +153,7 @@ def engine(model_name="whisper-8bit"):
                     raise ValueError('Invalid request identifier')
                 try:
                     audio = decode_audio(request.get('audio'))
-                    result = mlx_whisper.transcribe(audio, path_or_hf_repo=model_name)
-                    text, warnings = text_processors.process(result.get('text', '').strip(), request.get('processors'))
+                    text, warnings = text_processors.process(transcribe(audio).strip(), request.get('processors'))
                     emit({'event': 'transcript', 'id': request_id, 'text': text, 'warnings': warnings})
                 except Exception as exc:
                     emit({'event': 'error', 'id': request_id, 'message': str(exc)[:1000]})

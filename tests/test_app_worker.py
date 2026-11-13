@@ -2,8 +2,10 @@ import contextlib
 import tempfile
 import base64
 import io
+import importlib.metadata
 import json
 import os
+import runpy
 from pathlib import Path
 import signal
 import subprocess
@@ -13,9 +15,86 @@ import types
 import unittest
 from unittest.mock import Mock, patch
 import numpy as np
-from zkdictate.app_worker import decode_audio, engine, model_path
+from zkdictate.app_worker import decode_audio, engine, model_path, transcribe_parakeet
+
+
+@contextlib.contextmanager
+def parakeet_without_metal():
+    """Use the real CPU-only merger, but no model weights or GPU in unit tests."""
+    alignment = types.ModuleType('parakeet_mlx.alignment')
+    path = importlib.metadata.distribution('parakeet-mlx').locate_file('parakeet_mlx/alignment.py')
+    alignment.__dict__.update(runpy.run_path(str(path)))
+    core = types.ModuleType('mlx.core')
+    core.array, core.float32, core.pad = np.array, np.float32, np.pad
+    mlx = types.ModuleType('mlx'); mlx.core = core
+    audio = types.ModuleType('parakeet_mlx.audio')
+    audio.get_logmel = Mock(side_effect=lambda chunk, _: chunk)
+    parakeet = types.ModuleType('parakeet_mlx'); parakeet.audio = audio
+    with patch.dict(sys.modules, {'mlx': mlx, 'mlx.core': core, 'parakeet_mlx': parakeet,
+                                 'parakeet_mlx.audio': audio, 'parakeet_mlx.alignment': alignment}):
+        yield audio.get_logmel
+
 
 class AppWorkerTests(unittest.TestCase):
+    def test_parakeet_long_audio_merges_overlap_without_repeating_tail(self):
+        mel = self.enterContext(parakeet_without_metal())
+        from parakeet_mlx.alignment import AlignedToken, sentences_to_result, tokens_to_sentences
+        model = Mock()
+        model.preprocessor_config = types.SimpleNamespace(sample_rate=16000, n_fft=512)
+        def result(words):
+            return [sentences_to_result(tokens_to_sentences([
+                AlignedToken(i, word, start, .25) for i, word, start in words
+            ]))]
+        model.generate.side_effect = [
+            result([(1, 'Hello', 1), (2, ' brave', 27), (3, ' new', 28), (4, ' world', 29)]),
+            result([(2, ' brave', 2), (3, ' new', 3), (4, ' world', 4), (5, ' today.', 24)]),
+        ]
+        text = transcribe_parakeet(model, np.zeros(16000 * 55, dtype='<f4'))
+        self.assertEqual(text, 'Hello brave new world today.')
+        self.assertEqual([len(call.args[0]) for call in mel.call_args_list], [16000 * 30] * 2)
+
+    def test_parakeet_short_audio_is_padded_and_silence_stays_empty(self):
+        mel = self.enterContext(parakeet_without_metal())
+        model = Mock()
+        model.preprocessor_config = types.SimpleNamespace(sample_rate=16000, n_fft=512)
+        model.generate.return_value = [types.SimpleNamespace(text='')]
+        self.assertEqual(transcribe_parakeet(model, np.zeros(1, dtype='<f4')), '')
+        self.assertEqual(len(mel.call_args.args[0]), 512)
+
+    def test_parakeet_cache_preserves_original_weights_filename(self):
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            (folder / 'config.json').write_text('{}')
+            (folder / 'model.safetensors').write_bytes(b'weights')
+            with patch('huggingface_hub.snapshot_download', return_value=directory) as download:
+                with model_path('parakeet') as path:
+                    self.assertEqual(path, directory)
+                    self.assertTrue((Path(path) / 'model.safetensors').is_file())
+                download.assert_called_once_with(repo_id='mlx-community/parakeet-tdt-0.6b-v3', revision='ed2b7e8c15f9aaa0b5772e2efb986255eaef7e15', local_files_only=True)
+
+    def test_parakeet_worker_reuses_model_and_applies_processors(self):
+        core = types.ModuleType('mlx.core'); core.eval = Mock()
+        mlx = types.ModuleType('mlx'); mlx.core = core
+        parakeet = types.ModuleType('parakeet_mlx'); parakeet.from_pretrained = Mock()
+        audio = base64.b64encode(np.zeros(320, dtype='<f4')).decode()
+        data = ''.join(json.dumps({'command': 'transcribe', 'id': str(i), 'audio': audio,
+                                 'processors': [{'name': 'spoken_commands'}]}) + '\n'
+                       for i in range(2)).encode()
+        stdout = io.StringIO()
+        def decode(model, samples):
+            self.assertIs(model, parakeet.from_pretrained.return_value)
+            np.testing.assert_array_equal(samples, np.zeros(320, dtype='<f4'))
+            print('library progress')
+            return ' hello comma world '
+        with patch('zkdictate.app_worker.model_path', return_value=contextlib.nullcontext('/cached/parakeet')), patch.dict(sys.modules, {'mlx': mlx, 'mlx.core': core, 'parakeet_mlx': parakeet}), patch('zkdictate.app_worker.transcribe_parakeet', side_effect=decode) as transcribe, patch.object(sys, 'stdin', types.SimpleNamespace(buffer=io.BytesIO(data))), patch.object(sys, 'stdout', stdout), patch.object(sys, 'stderr', io.StringIO()):
+            self.assertEqual(engine('parakeet'), 0)
+        messages = [json.loads(line) for line in stdout.getvalue().splitlines()]
+        self.assertEqual([m['event'] for m in messages], ['loading', 'ready', 'transcript', 'transcript'])
+        self.assertEqual([m['text'] for m in messages[2:]], ['hello, world'] * 2)
+        self.assertEqual([m['id'] for m in messages[2:]], ['0', '1'])
+        parakeet.from_pretrained.assert_called_once_with('/cached/parakeet')
+        self.assertEqual(transcribe.call_count, 2)
+
     def test_cached_quantized_model_adapts_filename_without_network(self):
         with tempfile.TemporaryDirectory() as directory:
             folder = Path(directory)

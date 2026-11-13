@@ -219,6 +219,9 @@ struct NativeTests {
         var quantized = AppSettings(); quantized.model = .whisper8bit
         let restored = try AppSettings.fromData(JSONEncoder().encode(quantized))
         expect(restored.model == .whisper8bit, "8-bit choice persists")
+        var parakeet = AppSettings(); parakeet.model = .parakeet
+        let restoredParakeet = try AppSettings.fromData(JSONEncoder().encode(parakeet))
+        expect(restoredParakeet.model == .parakeet, "Parakeet choice persists")
         let unknown = try AppSettings.fromData(Data("{\"model\":\"removed-model\"}".utf8))
         expect(unknown.model == .whisper8bit, "unknown model falls back to default")
         expect(defaultClipboard.textProcessors.isEmpty && defaultClipboard.externalCommandPath == nil && defaultClipboard.externalCommandArgs.isEmpty, "text processing defaults off for existing installations")

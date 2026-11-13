@@ -31,7 +31,7 @@ You can also run `bash install.sh` from the downloaded folder.
 
 ## Dictate
 
-1. Keep the default **Whisper Turbo (8-bit, Default)** model, or choose **Whisper Turbo**. Each model downloads on first use.
+1. Keep the default **Whisper Turbo (8-bit, Default)** model, or choose **Whisper Turbo** or **Parakeet v3** (English and 24 other European languages). Each model downloads on first use. Parakeet's weights are about 2.5 GB. To switch, stop dictation, choose the model, then start again.
 2. Choose **Copy to clipboard**, **Save a new note**, or **Append to file**.
 3. Click **Start Dictation** and wait until it’s ready.
 4. Hold **Right Command** (or your chosen dictation key) for at least 1.5 seconds

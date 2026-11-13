@@ -24,6 +24,7 @@ The **Model** menu offers:
 | --- | --- | --- |
 | Whisper Turbo | About 1.61 GB | Standard model with 16-bit floating-point weights. |
 | Whisper Turbo (8-bit, Default) | About 864 MB | Quantized version of the same model, with smaller weights. Speed and accuracy may differ. |
+| Parakeet v3 | About 2.5 GB | NVIDIA Parakeet TDT 0.6B v3, running through parakeet-mlx. Supports English and 24 other European languages. |
 
 The default is **Whisper Turbo (8-bit, Default)**. The app remembers the model you
 choose. To switch models, click **Stop Dictation**, choose a model, and start again.
@@ -37,6 +38,8 @@ Afterward, it loads them without an internet connection. Deleting those files
 means downloading the model again.
 
 Models run on your Mac using MLX. Audio is never sent to a transcription service.
+Parakeet also waits for hotkey release before transcribing. Long recordings are
+processed in overlapping 30-second windows to limit memory use; audio stays in memory.
 Setup and the first download of each model require internet.
 
 If a model takes more than 10 minutes to download or load, the app stops trying

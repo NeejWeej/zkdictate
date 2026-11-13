@@ -3,7 +3,14 @@ import Foundation
 enum TranscriptionModel: String, Codable, CaseIterable {
     case whisper = "whisper"
     case whisper8bit = "whisper-8bit"
-    var title: String { self == .whisper ? "Whisper Turbo" : "Whisper Turbo (8-bit, Default)" }
+    case parakeet = "parakeet"
+    var title: String {
+        switch self {
+        case .whisper: return "Whisper Turbo"
+        case .whisper8bit: return "Whisper Turbo (8-bit, Default)"
+        case .parakeet: return "Parakeet v3"
+        }
+    }
 }
 
 /// Worker-side transcript rewriting steps; the worker applies them in its own fixed order.
